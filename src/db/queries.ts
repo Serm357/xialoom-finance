@@ -18,6 +18,11 @@ export const hideCategory = async (id: number): Promise<void> => {
     await db.execute('UPDATE categories SET is_hidden = 1 WHERE id = $1 AND is_default = 0', [id]);
 };
 
+export const updateCategory = async (id: number, name: string): Promise<void> => {
+    const db = await getDB();
+    await db.execute('UPDATE categories SET name = $1 WHERE id = $2', [name, id]);
+};
+
 // Transactions
 export const getTransactions = async (limit = 100, offset = 0): Promise<Transaction[]> => {
     const db = await getDB();

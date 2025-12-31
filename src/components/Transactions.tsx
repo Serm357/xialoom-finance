@@ -1,18 +1,19 @@
 import React, { useEffect, useState } from 'react';
-import { getTransactions, deleteTransaction, addTransaction, getCategories } from '../db/queries';
+import { getTransactions, deleteTransaction, addTransaction, updateTransaction, getCategories } from '../db/queries';
 import { Transaction, Category } from '../types';
 import { formatCurrency, formatDate } from '../lib/utils';
-import { Plus, Trash2 } from 'lucide-react';
+import { Plus, Trash2, Pencil } from 'lucide-react';
 
 export const Transactions: React.FC = () => {
     const [transactions, setTransactions] = useState<Transaction[]>([]);
     const [categories, setCategories] = useState<Category[]>([]);
     const [showForm, setShowForm] = useState(false);
+    const [editingTx, setEditingTx] = useState<Transaction | null>(null);
     const [loading, setLoading] = useState(true);
 
     const loadData = async () => {
         setLoading(true);
-        const t = await getTransactions(500); // Limit 500 for now
+        const t = await getTransactions(500);
         const c = await getCategories();
         setTransactions(t);
         setCategories(c);
@@ -30,8 +31,14 @@ export const Transactions: React.FC = () => {
         }
     };
 
+    const handleEdit = (tx: Transaction) => {
+        setEditingTx(tx);
+        setShowForm(true);
+    };
+
     const handleSuccess = () => {
         setShowForm(false);
+        setEditingTx(null);
         loadData();
     };
 
@@ -39,7 +46,7 @@ export const Transactions: React.FC = () => {
         <div className="flex-col gap-4">
             <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center' }}>
                 <h2>Transactions</h2>
-                <button className="btn btn-primary flex gap-2" onClick={() => setShowForm(true)}>
+                <button className="btn btn-primary flex gap-2" onClick={() => { setEditingTx(null); setShowForm(true); }}>
                     <Plus size={18} /> Add New
                 </button>
             </div>
@@ -47,8 +54,13 @@ export const Transactions: React.FC = () => {
             {showForm && (
                 <div style={{ position: 'fixed', top: 0, left: 0, right: 0, bottom: 0, background: 'rgba(0,0,0,0.5)', display: 'flex', alignItems: 'center', justifyContent: 'center', zIndex: 1000 }}>
                     <div className="card" style={{ width: '400px', maxWidth: '90%' }}>
-                        <h3>Add Transaction</h3>
-                        <TransactionForm categories={categories} onSuccess={handleSuccess} onCancel={() => setShowForm(false)} />
+                        <h3>{editingTx ? 'Edit Transaction' : 'Add Transaction'}</h3>
+                        <TransactionForm
+                            categories={categories}
+                            initialData={editingTx}
+                            onSuccess={handleSuccess}
+                            onCancel={() => { setShowForm(false); setEditingTx(null); }}
+                        />
                     </div>
                 </div>
             )}
@@ -78,11 +90,14 @@ export const Transactions: React.FC = () => {
                                         {t.category_name}
                                     </span>
                                 </td>
-                                <td style={{ padding: '12px' }}>{t.note}</td>
+                                <td style={{ padding: '12px' }}>{t.note || '-'}</td>
                                 <td style={{ padding: '12px', textAlign: 'right', fontWeight: 'bold', color: t.category_type === 'INCOME' ? 'var(--success-color)' : 'var(--danger-color)' }}>
                                     {t.category_type === 'INCOME' ? '+' : '-'}{formatCurrency(t.amount)}
                                 </td>
                                 <td style={{ padding: '12px', textAlign: 'center' }}>
+                                    <button onClick={() => handleEdit(t)} style={{ background: 'none', border: 'none', cursor: 'pointer', color: 'var(--primary-color)', marginRight: '8px' }}>
+                                        <Pencil size={16} />
+                                    </button>
                                     <button onClick={() => handleDelete(t.id)} style={{ background: 'none', border: 'none', cursor: 'pointer', color: 'var(--danger-color)' }}>
                                         <Trash2 size={16} />
                                     </button>
@@ -101,28 +116,36 @@ export const Transactions: React.FC = () => {
 
 interface FormProps {
     categories: Category[];
+    initialData?: Transaction | null;
     onSuccess: () => void;
     onCancel: () => void;
 }
 
-const TransactionForm: React.FC<FormProps> = ({ categories, onSuccess, onCancel }) => {
-    const [type, setType] = useState<'INCOME' | 'EXPENSE'>('EXPENSE');
-    const [categoryId, setCategoryId] = useState<number | ''>('');
-    const [amount, setAmount] = useState('');
-    const [date, setDate] = useState(new Date().toISOString().split('T')[0]);
-    const [note, setNote] = useState('');
+const TransactionForm: React.FC<FormProps> = ({ categories, initialData, onSuccess, onCancel }) => {
+    // If initialData exists, use its values
+    const [type, setType] = useState<'INCOME' | 'EXPENSE'>(initialData?.category_type || 'EXPENSE');
+    const [categoryId, setCategoryId] = useState<number | ''>(initialData?.category_id || '');
+    const [amount, setAmount] = useState(initialData?.amount?.toString() || '');
+    const [date, setDate] = useState(initialData?.date || new Date().toISOString().split('T')[0]);
+    const [note, setNote] = useState(initialData?.note || '');
 
     const handleSubmit = async (e: React.FormEvent) => {
         e.preventDefault();
         if (!categoryId || !amount) return;
 
         try {
-            await addTransaction({
+            const payload = {
                 category_id: Number(categoryId),
                 amount: parseFloat(amount),
                 date,
                 note
-            });
+            };
+
+            if (initialData) {
+                await updateTransaction(initialData.id, payload);
+            } else {
+                await addTransaction(payload);
+            }
             onSuccess();
         } catch (err) {
             console.error(err);
@@ -132,26 +155,37 @@ const TransactionForm: React.FC<FormProps> = ({ categories, onSuccess, onCancel 
 
     const filteredCats = categories.filter(c => c.type === type);
 
+    // If we switch type, clear category unless it matches existing (edge case, simplified here)
+    useEffect(() => {
+        if (initialData && initialData.category_type === type) {
+            setCategoryId(initialData.category_id);
+        } else if (!initialData) {
+            // setCategoryId(''); // Keep behavior or reset? Resetting is safer.
+        }
+    }, [type]);
+
     return (
         <form onSubmit={handleSubmit} className="flex-col gap-4">
-            <div style={{ display: 'flex', gap: '8px', marginBottom: '8px' }}>
-                <button
-                    type="button"
-                    className="btn"
-                    style={{ flex: 1, background: type === 'EXPENSE' ? 'var(--danger-color)' : 'var(--bg-color)', color: type === 'EXPENSE' ? 'white' : 'var(--text-color)' }}
-                    onClick={() => { setType('EXPENSE'); setCategoryId(''); }}
-                >
-                    Expense
-                </button>
-                <button
-                    type="button"
-                    className="btn"
-                    style={{ flex: 1, background: type === 'INCOME' ? 'var(--success-color)' : 'var(--bg-color)', color: type === 'INCOME' ? 'white' : 'var(--text-color)' }}
-                    onClick={() => { setType('INCOME'); setCategoryId(''); }}
-                >
-                    Income
-                </button>
-            </div>
+            {!initialData && (
+                <div style={{ display: 'flex', gap: '8px', marginBottom: '8px' }}>
+                    <button
+                        type="button"
+                        className="btn"
+                        style={{ flex: 1, background: type === 'EXPENSE' ? 'var(--danger-color)' : 'var(--bg-color)', color: type === 'EXPENSE' ? 'white' : 'var(--text-color)' }}
+                        onClick={() => { setType('EXPENSE'); setCategoryId(''); }}
+                    >
+                        Expense
+                    </button>
+                    <button
+                        type="button"
+                        className="btn"
+                        style={{ flex: 1, background: type === 'INCOME' ? 'var(--success-color)' : 'var(--bg-color)', color: type === 'INCOME' ? 'white' : 'var(--text-color)' }}
+                        onClick={() => { setType('INCOME'); setCategoryId(''); }}
+                    >
+                        Income
+                    </button>
+                </div>
+            )}
 
             <div className="flex-col gap-2">
                 <label>Category</label>

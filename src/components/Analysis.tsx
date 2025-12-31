@@ -2,36 +2,46 @@ import React, { useEffect, useState } from 'react';
 import { getCategoryBreakdown, getDailyHistory } from '../db/queries';
 import { PieChart, Pie, Cell, ResponsiveContainer, BarChart, Bar, XAxis, YAxis, Tooltip, Legend } from 'recharts';
 import { formatCurrency } from '../lib/utils';
+import { ChevronLeft, ChevronRight } from 'lucide-react';
 
 export const Analysis: React.FC = () => {
     const [breakdown, setBreakdown] = useState<any[]>([]);
     const [history, setHistory] = useState<any[]>([]);
-    const [loading, setLoading] = useState(true);
+    const [currentDate, setCurrentDate] = useState(new Date());
 
     useEffect(() => {
         loadCharts();
-    }, []);
+    }, [currentDate]);
 
     const loadCharts = async () => {
-        const now = new Date();
-        const year = now.getFullYear().toString();
-        const month = (now.getMonth() + 1).toString().padStart(2, '0');
+        const year = currentDate.getFullYear().toString();
+        const month = (currentDate.getMonth() + 1).toString().padStart(2, '0');
 
         const b = await getCategoryBreakdown(year, month);
-        const h = await getDailyHistory(30);
+        const h = await getDailyHistory(30); // Note: Daily history is still last 30 days global. Improving this requires changing query.
 
         setBreakdown(b);
         setHistory(h);
-        setLoading(false);
+    };
+
+    const changeMonth = (delta: number) => {
+        const newDate = new Date(currentDate);
+        newDate.setMonth(newDate.getMonth() + delta);
+        setCurrentDate(newDate);
     };
 
     const COLORS = ['#0088FE', '#00C49F', '#FFBB28', '#FF8042', '#8884d8', '#82ca9d'];
 
-    if (loading) return <div>Loading charts...</div>;
-
     return (
         <div className="flex-col gap-4">
-            <h2>Analysis</h2>
+            <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center' }}>
+                <h2>Analysis</h2>
+                <div style={{ display: 'flex', alignItems: 'center', gap: '16px', background: 'var(--card-bg)', padding: '8px', borderRadius: 'var(--radius)', border: '1px solid var(--border-color)' }}>
+                    <button onClick={() => changeMonth(-1)} style={{ border: 'none', background: 'none', cursor: 'pointer' }}><ChevronLeft size={20} /></button>
+                    <span style={{ fontWeight: 500 }}>{currentDate.toLocaleString('default', { month: 'long', year: 'numeric' })}</span>
+                    <button onClick={() => changeMonth(1)} style={{ border: 'none', background: 'none', cursor: 'pointer' }}><ChevronRight size={20} /></button>
+                </div>
+            </div>
 
             <div style={{ display: 'grid', gridTemplateColumns: '1fr 1fr', gap: '16px' }}>
                 <div className="card" style={{ height: '400px' }}>

@@ -1,67 +1,74 @@
 import React, { useEffect, useState } from 'react';
 import { getDailySummary, getMonthSummary } from '../db/queries';
 import { formatCurrency } from '../lib/utils';
-import { TrendingUp, TrendingDown, Wallet } from 'lucide-react';
+import { TrendingUp, TrendingDown, Wallet, ChevronLeft, ChevronRight } from 'lucide-react';
 
 export const Dashboard: React.FC = () => {
     const [daily, setDaily] = useState({ income: 0, expense: 0 });
     const [monthly, setMonthly] = useState({ income: 0, expense: 0 });
-    const [loading, setLoading] = useState(true);
+
+    // Date state
+    const [currentDate, setCurrentDate] = useState(new Date());
 
     const loadData = async () => {
         try {
-            const today = new Date().toISOString().split('T')[0];
-            const now = new Date();
-            const year = now.getFullYear().toString();
-            const month = (now.getMonth() + 1).toString().padStart(2, '0');
+            const dateStr = currentDate.toISOString().split('T')[0];
+            const year = currentDate.getFullYear().toString();
+            const month = (currentDate.getMonth() + 1).toString().padStart(2, '0');
 
-            const d = await getDailySummary(today);
+            const d = await getDailySummary(dateStr);
             const m = await getMonthSummary(year, month);
 
             setDaily(d);
             setMonthly(m);
         } catch (e) {
             console.error(e);
-        } finally {
-            setLoading(false);
         }
     };
 
     useEffect(() => {
         loadData();
-        // Listen for updates? For now just load on mount.
-        // In a real app we might use a context or event emitter for data refreshes.
-        const interval = setInterval(loadData, 5000); // Poll for updates every 5s for simple reactivity
-        return () => clearInterval(interval);
-    }, []);
+    }, [currentDate]);
 
-    if (loading) return <div>Loading...</div>;
+    const changeDate = (days: number) => {
+        const newDate = new Date(currentDate);
+        newDate.setDate(newDate.getDate() + days);
+        setCurrentDate(newDate);
+    };
 
     return (
         <div className="flex-col gap-4">
-            <h2 style={{ margin: '0 0 16px 0' }}>Today's Overview</h2>
+            <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center' }}>
+                <h2 style={{ margin: 0 }}>Dashboard</h2>
+                <div style={{ display: 'flex', alignItems: 'center', gap: '16px', background: 'var(--card-bg)', padding: '8px', borderRadius: 'var(--radius)', border: '1px solid var(--border-color)' }}>
+                    <button onClick={() => changeDate(-1)} style={{ border: 'none', background: 'none', cursor: 'pointer' }}><ChevronLeft size={20} /></button>
+                    <span style={{ fontWeight: 500 }}>{currentDate.toDateString()}</span>
+                    <button onClick={() => changeDate(1)} style={{ border: 'none', background: 'none', cursor: 'pointer' }}><ChevronRight size={20} /></button>
+                </div>
+            </div>
+
             <div style={{ display: 'grid', gridTemplateColumns: 'repeat(3, 1fr)', gap: '16px' }}>
                 <SummaryCard
                     title="Daily Income"
                     amount={daily.income}
                     icon={<TrendingUp color="var(--success-color)" />}
-                    trend="Today"
+                    trend="Selected Day"
                 />
                 <SummaryCard
                     title="Daily Expenses"
                     amount={daily.expense}
                     icon={<TrendingDown color="var(--danger-color)" />}
-                    trend="Today"
+                    trend="Selected Day"
                 />
                 <SummaryCard
                     title="Daily Balance"
                     amount={daily.income - daily.expense}
                     icon={<Wallet color="var(--primary-color)" />}
-                    trend="Today"
+                    trend="Selected Day"
                 />
             </div>
 
-            <h2 style={{ margin: '32px 0 16px 0' }}>Monthly Overview</h2>
+            <h3 style={{ margin: '32px 0 16px 0' }}>Monthly Overview ({currentDate.toLocaleString('default', { month: 'long', year: 'numeric' })})</h3>
             <div style={{ display: 'grid', gridTemplateColumns: 'repeat(3, 1fr)', gap: '16px' }}>
                 <SummaryCard
                     title="Monthly Income"
