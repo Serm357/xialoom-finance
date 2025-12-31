@@ -11,6 +11,9 @@
     "sql:default",
     "sql:allow-load",
     "sql:allow-execute",
-    "sql:allow-select"
+    "sql:allow-select",
+    "dialog:default",
+    "fs:default",
+    "fs:write-all"
   ]
 }

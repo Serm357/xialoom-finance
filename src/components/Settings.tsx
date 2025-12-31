@@ -1,5 +1,7 @@
 import React, { useState } from 'react';
 import * as XLSX from 'xlsx';
+import { save } from '@tauri-apps/plugin-dialog';
+import { writeFile } from '@tauri-apps/plugin-fs';
 import { getAllTransactions, getCategories, addCategory, hideCategory, updateCategory } from '../db/queries';
 import { Download, Save, EyeOff, Pencil, X } from 'lucide-react';
 import { Category } from '../types';
@@ -26,27 +28,44 @@ export const Settings: React.FC = () => {
         setExporting(true);
         try {
             const data = await getAllTransactions();
+
+            if (data.length === 0) {
+                alert('No transactions to export');
+                setExporting(false);
+                return;
+            }
+
+            // Create workbook
             const ws = XLSX.utils.json_to_sheet(data.map(t => ({
                 Date: t.date,
                 Type: t.category_type,
                 Category: t.category_name,
                 Amount: t.amount,
-                Note: t.note
+                Note: t.note || ''
             })));
             const wb = XLSX.utils.book_new();
             XLSX.utils.book_append_sheet(wb, ws, "Transactions");
 
-            // Save file
-            const fileName = `Finance_Export_${new Date().toISOString().split('T')[0]}.xlsx`;
-            XLSX.writeFile(wb, fileName);
-            alert(`Exported to ${fileName}`);
-        } catch (e) {
+            // Get file path from user
+            const filePath = await save({
+                defaultPath: `Finance_Export_${new Date().toISOString().split('T')[0]}.xlsx`,
+                filters: [{ name: 'Excel Files', extensions: ['xlsx'] }]
+            });
+
+            if (filePath) {
+                // Write to file using Tauri FS
+                const buffer = XLSX.write(wb, { type: 'array', bookType: 'xlsx' });
+                await writeFile(filePath, new Uint8Array(buffer));
+                alert(`Successfully exported ${data.length} transactions to:\n${filePath}`);
+            }
+        } catch (e: any) {
             console.error(e);
-            alert('Export failed');
+            alert(`Export failed: ${e.message || JSON.stringify(e)}`);
         } finally {
             setExporting(false);
         }
     };
+
 
     const handleAddCategory = async (e: React.FormEvent) => {
         e.preventDefault();
