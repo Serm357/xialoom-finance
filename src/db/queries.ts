@@ -151,3 +151,40 @@ export const getTopCategories = async (year: string, month: string, type: 'INCOM
         LIMIT $4
     `, [type, year, month, limit]);
 };
+
+export const getMonthlyTotals = async (year: string, month: string): Promise<{ income: number, expense: number }> => {
+    const db = await getDB();
+    const result = await db.select<any[]>(`
+        SELECT 
+            COALESCE(SUM(CASE WHEN c.type = 'INCOME' THEN t.amount ELSE 0 END), 0) as income,
+            COALESCE(SUM(CASE WHEN c.type = 'EXPENSE' THEN t.amount ELSE 0 END), 0) as expense
+        FROM transactions t
+        JOIN categories c ON t.category_id = c.id
+        WHERE strftime('%Y', t.date) = $1 AND strftime('%m', t.date) = $2
+    `, [year, month]);
+    return { income: result[0]?.income || 0, expense: result[0]?.expense || 0 };
+};
+
+export const getMonthlyHistory = async (months = 6): Promise<{ month: string, income: number, expense: number }[]> => {
+    const db = await getDB();
+    return await db.select(`
+        SELECT 
+            strftime('%Y-%m', t.date) as month,
+            COALESCE(SUM(CASE WHEN c.type = 'INCOME' THEN t.amount ELSE 0 END), 0) as income,
+            COALESCE(SUM(CASE WHEN c.type = 'EXPENSE' THEN t.amount ELSE 0 END), 0) as expense
+        FROM transactions t
+        JOIN categories c ON t.category_id = c.id
+        GROUP BY strftime('%Y-%m', t.date)
+        ORDER BY month DESC
+        LIMIT $1
+    `, [months]);
+};
+
+export const getTransactionCount = async (year: string, month: string): Promise<number> => {
+    const db = await getDB();
+    const result = await db.select<any[]>(`
+        SELECT COUNT(*) as count FROM transactions t
+        WHERE strftime('%Y', t.date) = $1 AND strftime('%m', t.date) = $2
+    `, [year, month]);
+    return result[0]?.count || 0;
+};
