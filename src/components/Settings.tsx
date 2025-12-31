@@ -2,9 +2,9 @@ import React, { useState } from 'react';
 import * as XLSX from 'xlsx';
 import { save } from '@tauri-apps/plugin-dialog';
 import { writeFile } from '@tauri-apps/plugin-fs';
-import { getAllTransactions, getCategories, addCategory, hideCategory, updateCategory } from '../db/queries';
+import { getAllTransactions, getCategories, addCategory, updateCategory, deleteCategory } from '../db/queries';
 import { wipeDatabase } from '../db/index';
-import { Download, Save, EyeOff, Pencil, X, AlertTriangle } from 'lucide-react';
+import { Download, Save, Pencil, X, AlertTriangle, Trash2 } from 'lucide-react';
 import { Category } from '../types';
 
 export const Settings: React.FC = () => {
@@ -90,10 +90,15 @@ export const Settings: React.FC = () => {
         }
     };
 
-    const handleHideCategory = async (id: number) => {
-        if (confirm('Hide this category?')) {
-            await hideCategory(id);
-            loadCats();
+    const handleDeleteCategory = async (id: number) => {
+        if (confirm('Are you sure you want to delete this category? All associated transactions will be permanently deleted.')) {
+            try {
+                await deleteCategory(id);
+                loadCats();
+            } catch (e) {
+                console.error(e);
+                alert('Failed to delete category');
+            }
         }
     };
 
@@ -189,8 +194,8 @@ export const Settings: React.FC = () => {
                                         )}
 
                                         {!c.is_default && (
-                                            <button onClick={() => handleHideCategory(c.id)} style={{ background: 'none', border: 'none', cursor: 'pointer', color: 'var(--secondary-color)' }}>
-                                                <EyeOff size={16} />
+                                            <button onClick={() => handleDeleteCategory(c.id)} style={{ background: 'none', border: 'none', cursor: 'pointer', color: 'var(--danger-color)' }}>
+                                                <Trash2 size={16} />
                                             </button>
                                         )}
                                     </td>
@@ -313,16 +318,15 @@ export const Settings: React.FC = () => {
                         className="btn"
                         style={{ background: 'var(--danger-color)', color: 'white', border: 'none', display: 'flex', gap: '8px', alignItems: 'center' }}
                         onClick={async () => {
-                            if (confirm('WARNING: Are you sure you want to delete ALL data? This cannot be undone.')) {
-                                if (confirm('Double check: Allows really wipe everything?')) {
-                                    try {
-                                        await wipeDatabase();
-                                        alert('Database wiped successfully.');
-                                        window.location.reload(); // Reload to refresh state
-                                    } catch (e) {
-                                        console.error(e);
-                                        alert('Failed to wipe database');
-                                    }
+                            const input = prompt('WARNING: This will permanently delete ALL data.\nType "DELETE" to confirm.');
+                            if (input === 'DELETE') {
+                                try {
+                                    await wipeDatabase();
+                                    alert('Database wiped successfully.');
+                                    window.location.reload(); // Reload to refresh state
+                                } catch (e) {
+                                    console.error(e);
+                                    alert('Failed to wipe database');
                                 }
                             }
                         }}

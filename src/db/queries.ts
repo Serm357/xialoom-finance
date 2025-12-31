@@ -23,6 +23,14 @@ export const updateCategory = async (id: number, name: string): Promise<void> =>
     await db.execute('UPDATE categories SET name = $1 WHERE id = $2', [name, id]);
 };
 
+export const deleteCategory = async (id: number): Promise<void> => {
+    const db = await getDB();
+    // Cascade delete transactions first
+    await db.execute('DELETE FROM transactions WHERE category_id = $1', [id]);
+    // Then delete category
+    await db.execute('DELETE FROM categories WHERE id = $1', [id]);
+};
+
 // Transactions
 export const getTransactions = async (limit = 100, offset = 0): Promise<Transaction[]> => {
     const db = await getDB();
