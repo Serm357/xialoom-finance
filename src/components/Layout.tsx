@@ -1,5 +1,5 @@
 import React from 'react';
-import { LayoutDashboard, Receipt, Settings as SettingsIcon, PieChart } from 'lucide-react';
+import { LayoutDashboard, Receipt, Settings as SettingsIcon, PieChart, Shield } from 'lucide-react';
 
 interface LayoutProps {
     children: React.ReactNode;
@@ -12,6 +12,7 @@ export const Layout: React.FC<LayoutProps> = ({ children, activeTab, onTabChange
         { id: 'dashboard', label: 'Dashboard', icon: LayoutDashboard },
         { id: 'transactions', label: 'Transactions', icon: Receipt },
         { id: 'analysis', label: 'Analysis', icon: PieChart },
+        { id: 'vault', label: 'Vault', icon: Shield },
         { id: 'settings', label: 'Settings', icon: SettingsIcon },
     ];
 

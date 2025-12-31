@@ -62,4 +62,33 @@ const runMigrations = async (db: Database) => {
         }
         console.log('Default categories seeded');
     }
+
+    // Table: Vault Configuration
+    await db.execute(`
+        CREATE TABLE IF NOT EXISTS vault_config (
+            id INTEGER PRIMARY KEY,
+            password_hash TEXT NOT NULL,
+            password_salt TEXT NOT NULL,
+            password_hint TEXT,
+            auto_lock_minutes INTEGER DEFAULT 5,
+            created_at DATETIME DEFAULT CURRENT_TIMESTAMP,
+            last_accessed DATETIME
+        );
+    `);
+
+    // Table: Vault Credentials
+    await db.execute(`
+        CREATE TABLE IF NOT EXISTS vault_credentials (
+            id INTEGER PRIMARY KEY AUTOINCREMENT,
+            title TEXT NOT NULL,
+            username_encrypted TEXT,
+            password_encrypted TEXT NOT NULL,
+            url TEXT,
+            category TEXT DEFAULT 'general',
+            notes_encrypted TEXT,
+            iv TEXT NOT NULL,
+            created_at DATETIME DEFAULT CURRENT_TIMESTAMP,
+            updated_at DATETIME
+        );
+    `);
 };

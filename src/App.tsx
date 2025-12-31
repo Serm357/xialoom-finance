@@ -1,10 +1,11 @@
 import React, { useState, useEffect } from "react";
 import { Layout } from "./components/Layout";
 import { Dashboard } from "./components/Dashboard";
-import { Transactions } from "./components/Transactions";
 import { Analysis } from "./components/Analysis";
-import { Settings } from "./components/Settings";
+import { Vault } from "./components/Vault";
 import "./styles/main.css";
+import { Transactions } from "./components/Transactions";
+import { Settings } from "./components/Settings";
 
 function App() {
   const [activeTab, setActiveTab] = useState('dashboard');
@@ -56,6 +57,8 @@ function App() {
         return <Transactions />;
       case 'analysis':
         return <Analysis />;
+      case 'vault':
+        return <Vault />;
       case 'settings':
         return <Settings />;
       default:
