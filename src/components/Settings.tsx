@@ -36,8 +36,13 @@ export const Settings: React.FC = () => {
             }
 
             // Create workbook
+            const formatDate = (isoDate: string) => {
+                const [year, month, day] = isoDate.split('-');
+                return `${day}/${month}/${year}`;
+            };
+
             const ws = XLSX.utils.json_to_sheet(data.map(t => ({
-                Date: t.date,
+                Date: formatDate(t.date),
                 Type: t.category_type,
                 Category: t.category_name,
                 Amount: t.amount,
@@ -244,6 +249,31 @@ export const Settings: React.FC = () => {
 
                             if (confirm(`Found ${json.length} rows. Import?`)) {
                                 let imported = 0;
+
+                                // Parse date from DD/MM/YYYY to YYYY-MM-DD
+                                const parseDate = (dateStr: string): string => {
+                                    if (!dateStr) return new Date().toISOString().split('T')[0];
+
+                                    // Check if already in YYYY-MM-DD format
+                                    if (/^\d{4}-\d{2}-\d{2}$/.test(dateStr)) {
+                                        return dateStr;
+                                    }
+
+                                    // Try DD/MM/YYYY format
+                                    if (/^\d{1,2}\/\d{1,2}\/\d{4}$/.test(dateStr)) {
+                                        const [day, month, year] = dateStr.split('/');
+                                        return `${year}-${month.padStart(2, '0')}-${day.padStart(2, '0')}`;
+                                    }
+
+                                    // Try to parse as date object
+                                    const d = new Date(dateStr);
+                                    if (!isNaN(d.getTime())) {
+                                        return d.toISOString().split('T')[0];
+                                    }
+
+                                    return new Date().toISOString().split('T')[0];
+                                };
+
                                 for (const row of json) {
                                     let catId = categories.find(c => c.name === row.Category)?.id;
 
@@ -257,7 +287,7 @@ export const Settings: React.FC = () => {
                                         await import('../db/queries').then(q => q.addTransaction({
                                             category_id: catId!,
                                             amount: Number(row.Amount),
-                                            date: row.Date, // Assuming ISO or clean format
+                                            date: parseDate(row.Date),
                                             note: row.Note
                                         }));
                                         imported++;
