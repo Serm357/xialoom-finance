@@ -123,7 +123,31 @@ export const getDailyHistory = async (days = 30): Promise<{ date: string, amount
         JOIN categories c ON t.category_id = c.id
         WHERE c.type = 'EXPENSE'
         GROUP BY date
-        ORDER BY date ASC
+        ORDER BY date DESC
         LIMIT $1
     `, [days]);
 }
+
+export const getRecentTransactions = async (limit = 5): Promise<Transaction[]> => {
+    const db = await getDB();
+    return await db.select<Transaction[]>(`
+        SELECT t.*, c.name as category_name, c.type as category_type 
+        FROM transactions t 
+        JOIN categories c ON t.category_id = c.id 
+        ORDER BY t.date DESC, t.id DESC 
+        LIMIT $1
+    `, [limit]);
+};
+
+export const getTopCategories = async (year: string, month: string, type: 'INCOME' | 'EXPENSE', limit = 3): Promise<{ name: string, amount: number }[]> => {
+    const db = await getDB();
+    return await db.select(`
+        SELECT c.name, SUM(t.amount) as amount
+        FROM transactions t
+        JOIN categories c ON t.category_id = c.id
+        WHERE c.type = $1 AND strftime('%Y', t.date) = $2 AND strftime('%m', t.date) = $3
+        GROUP BY c.id
+        ORDER BY amount DESC
+        LIMIT $4
+    `, [type, year, month, limit]);
+};
