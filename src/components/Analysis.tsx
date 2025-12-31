@@ -7,7 +7,7 @@ import {
 import { formatCurrency } from '../lib/utils';
 import {
     ChevronLeft, ChevronRight, TrendingUp, TrendingDown, DollarSign,
-    PiggyBank, BarChart3, Calendar, Target, ArrowUpRight, ArrowDownRight
+    Percent, BarChart3, Calendar, Target, ArrowUpRight, ArrowDownRight
 } from 'lucide-react';
 
 interface MonthlyData {
@@ -138,7 +138,7 @@ export const Analysis: React.FC = () => {
                 <KPICard
                     title="Savings Rate"
                     value={`${savingsRate.toFixed(1)}%`}
-                    icon={<PiggyBank size={24} />}
+                    icon={<Percent size={24} />}
                     color={savingsRate >= 20 ? '#22c55e' : savingsRate >= 0 ? '#f59e0b' : '#ef4444'}
                     subtitle={savingsRate >= 20 ? 'Excellent' : savingsRate >= 10 ? 'Good' : savingsRate >= 0 ? 'Low' : 'Negative'}
                 />
