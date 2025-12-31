@@ -1,4 +1,4 @@
-import React, { useState, useEffect, useCallback, createContext } from 'react';
+import React, { useState, useEffect, useCallback, createContext, useRef } from 'react';
 import {
     isVaultConfigured, getVaultConfig, createVaultConfig, updateLastAccessed,
     getCredentials, addCredential, updateCredential, deleteCredential,
@@ -8,10 +8,12 @@ import {
     hashPassword, verifyPassword, generateSalt, encrypt, decrypt,
     generatePassword, calculatePasswordStrength
 } from '../lib/crypto';
-
+import * as XLSX from 'xlsx';
+import { save } from '@tauri-apps/plugin-dialog';
+import { writeFile } from '@tauri-apps/plugin-fs';
 import {
     Lock, Unlock, Plus, Trash2, Pencil, Eye, EyeOff, Copy, Check,
-    Search, Key, Globe, User, RefreshCw, Shield, X, AlertTriangle
+    Search, Key, Globe, User, RefreshCw, Shield, X, AlertTriangle, Download, Upload
 } from 'lucide-react';
 
 // Vault Categories
@@ -53,16 +55,26 @@ export const Vault: React.FC = () => {
     };
 
     const unlock = async (pwd: string): Promise<boolean> => {
-        if (!config) return false;
-        const isValid = await verifyPassword(pwd, config.password_salt, config.password_hash);
-        if (isValid) {
-            setPassword(pwd);
-            setIsUnlocked(true);
-            await updateLastAccessed();
-            startAutoLockTimer(config.auto_lock_minutes);
-            return true;
+        if (!config) {
+            console.error('Vault unlock failed: config is null');
+            return false;
         }
-        return false;
+        try {
+            console.log('Attempting vault unlock...');
+            const isValid = await verifyPassword(pwd, config.password_salt, config.password_hash);
+            console.log('Verification result:', isValid);
+            if (isValid) {
+                setPassword(pwd);
+                setIsUnlocked(true);
+                await updateLastAccessed();
+                startAutoLockTimer(config.auto_lock_minutes);
+                return true;
+            }
+            return false;
+        } catch (err) {
+            console.error('Vault unlock error:', err);
+            return false;
+        }
     };
 
     const lock = useCallback(() => {
@@ -359,6 +371,8 @@ const VaultMain: React.FC<{ password: string; salt: string; onLock: () => void }
     const [showForm, setShowForm] = useState(false);
     const [editingCred, setEditingCred] = useState<VaultCredential | null>(null);
     const [loading, setLoading] = useState(true);
+    const [exporting, setExporting] = useState(false);
+    const fileInputRef = useRef<HTMLInputElement>(null);
 
     useEffect(() => {
         loadCredentials();
@@ -412,6 +426,108 @@ const VaultMain: React.FC<{ password: string; salt: string; onLock: () => void }
         loadCredentials();
     };
 
+    // Export passwords to Excel
+    const handleExport = async () => {
+        if (decryptedCreds.size === 0) {
+            alert('No credentials to export');
+            return;
+        }
+
+        setExporting(true);
+        try {
+            // Build export data with decrypted values
+            const exportData = credentials.map(cred => {
+                const dec = decryptedCreds.get(cred.id);
+                return {
+                    Title: cred.title,
+                    Category: cred.category,
+                    Username: dec?.username || '',
+                    Password: dec?.password || '',
+                    URL: cred.url || '',
+                    Notes: dec?.notes || ''
+                };
+            });
+
+            const ws = XLSX.utils.json_to_sheet(exportData);
+            const wb = XLSX.utils.book_new();
+            XLSX.utils.book_append_sheet(wb, ws, 'Passwords');
+
+            const today = new Date().toISOString().split('T')[0];
+            const filePath = await save({
+                defaultPath: `vault-export-${today}.xlsx`,
+                filters: [{ name: 'Excel', extensions: ['xlsx'] }]
+            });
+
+            if (filePath) {
+                const excelBuffer = XLSX.write(wb, { bookType: 'xlsx', type: 'array' });
+                await writeFile(filePath, new Uint8Array(excelBuffer));
+                alert(`Exported ${exportData.length} credentials to:\n${filePath}`);
+            }
+        } catch (err) {
+            console.error('Export failed:', err);
+            alert('Export failed. See console for details.');
+        } finally {
+            setExporting(false);
+        }
+    };
+
+    // Import passwords from Excel
+    const handleImport = async (e: React.ChangeEvent<HTMLInputElement>) => {
+        const file = e.target.files?.[0];
+        if (!file) return;
+
+        try {
+            const data = await file.arrayBuffer();
+            const wb = XLSX.read(data);
+            const ws = wb.Sheets[wb.SheetNames[0]];
+            const json: any[] = XLSX.utils.sheet_to_json(ws);
+
+            if (json.length === 0) {
+                alert('No data found in file');
+                return;
+            }
+
+            // Validate required fields
+            const validRows = json.filter(row => row.Title && row.Password);
+            if (validRows.length === 0) {
+                alert('No valid rows found. Each row needs at least Title and Password columns.');
+                return;
+            }
+
+            if (!confirm(`Found ${validRows.length} valid credentials. Import them?`)) {
+                return;
+            }
+
+            let imported = 0;
+            for (const row of validRows) {
+                const { ciphertext: passwordEnc, iv } = await encrypt(row.Password.toString(), password, salt);
+                const usernameEnc = row.Username ? (await encrypt(row.Username.toString(), password, salt)).ciphertext : null;
+                const notesEnc = row.Notes ? (await encrypt(row.Notes.toString(), password, salt)).ciphertext : null;
+                const category = VAULT_CATEGORIES.includes(row.Category) ? row.Category : 'Other';
+
+                await addCredential(
+                    row.Title.toString(),
+                    usernameEnc,
+                    passwordEnc,
+                    row.URL?.toString() || null,
+                    category,
+                    notesEnc,
+                    iv
+                );
+                imported++;
+            }
+
+            alert(`Successfully imported ${imported} credentials!`);
+            loadCredentials();
+        } catch (err) {
+            console.error('Import failed:', err);
+            alert('Import failed. Make sure the file has Title and Password columns.');
+        } finally {
+            // Reset file input
+            if (fileInputRef.current) fileInputRef.current.value = '';
+        }
+    };
+
     return (
         <div className="flex-col gap-4 animate-fade-in">
             {/* Header */}
@@ -425,10 +541,23 @@ const VaultMain: React.FC<{ password: string; salt: string; onLock: () => void }
                         {credentials.length} credential{credentials.length !== 1 ? 's' : ''} stored securely
                     </p>
                 </div>
-                <div style={{ display: 'flex', gap: '8px' }}>
+                <div style={{ display: 'flex', gap: '8px', flexWrap: 'wrap' }}>
                     <button className="btn btn-primary" onClick={() => { setEditingCred(null); setShowForm(true); }}>
-                        <Plus size={18} /> Add Credential
+                        <Plus size={18} /> Add
                     </button>
+                    <button className="btn" onClick={handleExport} disabled={exporting} style={{ background: 'var(--bg-color)', border: '1px solid var(--border-color)' }}>
+                        <Download size={18} /> {exporting ? 'Exporting...' : 'Export'}
+                    </button>
+                    <button className="btn" onClick={() => fileInputRef.current?.click()} style={{ background: 'var(--bg-color)', border: '1px solid var(--border-color)' }}>
+                        <Upload size={18} /> Import
+                    </button>
+                    <input
+                        ref={fileInputRef}
+                        type="file"
+                        accept=".xlsx,.xls"
+                        onChange={handleImport}
+                        style={{ display: 'none' }}
+                    />
                     <button className="btn" onClick={onLock} style={{ background: 'var(--bg-color)', border: '1px solid var(--border-color)' }}>
                         <Lock size={18} /> Lock
                     </button>
