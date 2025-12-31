@@ -18,6 +18,7 @@ export interface Transaction {
     // Joined fields
     category_name?: string;
     category_type?: TransactionType;
+    months_covered?: number;
 }
 
 export interface TransactionPayload {
@@ -25,6 +26,7 @@ export interface TransactionPayload {
     amount: number;
     date: string;
     note?: string;
+    months_covered?: number;
 }
 
 export interface DailySummary {

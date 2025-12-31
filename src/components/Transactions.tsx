@@ -258,6 +258,7 @@ const TransactionForm: React.FC<FormProps> = ({ categories, initialData, onSucce
     const [amount, setAmount] = useState(initialData?.amount?.toString() || '');
     const [date, setDate] = useState(initialData?.date || new Date().toISOString().split('T')[0]);
     const [note, setNote] = useState(initialData?.note || '');
+    const [monthsCovered, setMonthsCovered] = useState(initialData?.months_covered || 1);
     const [submitting, setSubmitting] = useState(false);
 
     const handleSubmit = async (e: React.FormEvent) => {
@@ -270,7 +271,8 @@ const TransactionForm: React.FC<FormProps> = ({ categories, initialData, onSucce
                 category_id: Number(categoryId),
                 amount: parseFloat(amount),
                 date,
-                note
+                note,
+                months_covered: monthsCovered
             };
 
             if (initialData) {
@@ -375,6 +377,21 @@ const TransactionForm: React.FC<FormProps> = ({ categories, initialData, onSucce
                     onChange={e => setNote(e.target.value)}
                     placeholder="Optional note..."
                 />
+            </div>
+
+            <div className="flex-col gap-2">
+                <label style={{ fontWeight: 500 }}>Months Covered (Recurring)</label>
+                <input
+                    type="number"
+                    min="1"
+                    step="1"
+                    style={{ padding: '10px', borderRadius: 'var(--radius-sm)', border: '1px solid var(--border-color)', background: 'var(--bg-color)' }}
+                    value={monthsCovered}
+                    onChange={e => setMonthsCovered(Math.max(1, parseInt(e.target.value) || 1))}
+                />
+                <span style={{ fontSize: '0.8rem', color: 'var(--secondary-color)' }}>
+                    Spread the cost/income over this many months (e.g. Rent = 12, Quarterly Tax = 3)
+                </span>
             </div>
 
             <div style={{ display: 'flex', justifyContent: 'flex-end', gap: '8px', marginTop: '8px' }}>

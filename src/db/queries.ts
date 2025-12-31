@@ -48,8 +48,8 @@ export const getAllTransactions = async (): Promise<Transaction[]> => {
 export const addTransaction = async (data: TransactionPayload): Promise<number> => {
     const db = await getDB();
     const result = await db.execute(
-        'INSERT INTO transactions (category_id, amount, date, note) VALUES ($1, $2, $3, $4)',
-        [data.category_id, data.amount, data.date, data.note || null]
+        'INSERT INTO transactions (category_id, amount, date, note, months_covered) VALUES ($1, $2, $3, $4, $5)',
+        [data.category_id, data.amount, data.date, data.note || null, data.months_covered || 1]
     );
     return result.lastInsertId as number;
 };
@@ -62,10 +62,33 @@ export const deleteTransaction = async (id: number): Promise<void> => {
 export const updateTransaction = async (id: number, data: TransactionPayload): Promise<void> => {
     const db = await getDB();
     await db.execute(
-        'UPDATE transactions SET category_id = $1, amount = $2, date = $3, note = $4 WHERE id = $5',
-        [data.category_id, data.amount, data.date, data.note || null, id]
+        'UPDATE transactions SET category_id = $1, amount = $2, date = $3, note = $4, months_covered = $5 WHERE id = $6',
+        [data.category_id, data.amount, data.date, data.note || null, data.months_covered || 1, id]
     );
-}
+};
+
+export const getTransactionsInRange = async (_start: string, end: string): Promise<Transaction[]> => {
+    const db = await getDB();
+    // We fetch a bit wider range or filter in JS if needed to account for "past transactions covering this future period"
+    // Ideally, we fetch ALL transactions that *COULD* overlap the window.
+    // Overlap condition:
+    // User pays on TxDate. Covers N months.
+    // End Date of Tx coverage = TxDate + N months.
+    // We need Tx where (TxDate <= EndRange) AND (TxDate + Months >= StartRange)
+
+    // For simplicity, let's fetch ALL transactions before the end date, 
+    // and filter computationally in the smart logic to handle the overlaps correctly.
+    // Or just fetch all. The DB isn't likely to be massive for a personal finance app right now.
+    // Let's safe-guard by fetching where date <= end.
+
+    return await db.select<Transaction[]>(`
+        SELECT t.*, c.name as category_name, c.type as category_type 
+        FROM transactions t 
+        JOIN categories c ON t.category_id = c.id 
+        WHERE t.date <= $1
+        ORDER BY t.date ASC
+      `, [end]);
+};
 
 // Summaries
 export const getDailySummary = async (date: string): Promise<{ income: number, expense: number }> => {
@@ -187,4 +210,19 @@ export const getTransactionCount = async (year: string, month: string): Promise<
         WHERE strftime('%Y', t.date) = $1 AND strftime('%m', t.date) = $2
     `, [year, month]);
     return result[0]?.count || 0;
+};
+// Balance
+export const getCurrentBalance = async (): Promise<number> => {
+    const db = await getDB();
+    const result = await db.select<any[]>(`
+        SELECT 
+            SUM(CASE WHEN c.type = 'INCOME' THEN t.amount ELSE 0 END) as income,
+            SUM(CASE WHEN c.type = 'EXPENSE' THEN t.amount ELSE 0 END) as expense
+        FROM transactions t
+        JOIN categories c ON t.category_id = c.id
+    `);
+
+    const income = result[0]?.income || 0;
+    const expense = result[0]?.expense || 0;
+    return income - expense;
 };

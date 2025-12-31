@@ -91,4 +91,33 @@ const runMigrations = async (db: Database) => {
             updated_at DATETIME
         );
     `);
+
+    // Migration: Add months_covered to transactions if not exists
+    try {
+        await db.execute('ALTER TABLE transactions ADD COLUMN months_covered INTEGER DEFAULT 1');
+        console.log('Migration: Added months_covered column');
+    } catch (e) {
+        // Column likely exists
+    }
+};
+
+export const wipeDatabase = async () => {
+    if (!db) return;
+    try {
+        await db.execute('DELETE FROM transactions');
+        await db.execute('DELETE FROM categories'); // Optional: usually keep categories, but user asked to "wipe all records"
+        await db.execute('DELETE FROM vault_credentials');
+        // Re-seed default categories
+        const defaultIncome = ['Salary', 'Freelance', 'Investment', 'Gifts', 'Other Income'];
+        const defaultExpense = ['Food', 'Rent', 'Electricity', 'Water', 'Transport', 'Internet / Mobile', 'Groceries', 'Entertainment', 'Health', 'Miscellaneous'];
+        for (const cat of defaultIncome) {
+            await db.execute('INSERT INTO categories (name, type, is_default) VALUES ($1, $2, $3)', [cat, 'INCOME', 1]);
+        }
+        for (const cat of defaultExpense) {
+            await db.execute('INSERT INTO categories (name, type, is_default) VALUES ($1, $2, $3)', [cat, 'EXPENSE', 1]);
+        }
+    } catch (error) {
+        console.error('Failed to wipe database:', error);
+        throw error;
+    }
 };

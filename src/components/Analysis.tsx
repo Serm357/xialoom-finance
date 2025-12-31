@@ -1,37 +1,33 @@
 import React, { useEffect, useState } from 'react';
-import { getCategoryBreakdown, getDailyHistory, getMonthlyTotals, getMonthlyHistory, getTopCategories, getTransactionCount } from '../db/queries';
+import { getTransactionsInRange, getMonthlyHistory, getCurrentBalance } from '../db/queries';
+import { calculatePeriodStats, FinancialStats } from '../lib/finance';
+import { formatCurrency } from '../lib/utils';
 import {
     PieChart, Pie, Cell, ResponsiveContainer, Bar, XAxis, YAxis, Tooltip, Legend,
     Line, AreaChart, Area, ComposedChart, CartesianGrid
 } from 'recharts';
-import { formatCurrency } from '../lib/utils';
 import {
     ChevronLeft, ChevronRight, TrendingUp, TrendingDown, DollarSign,
-    Percent, BarChart3, Calendar, Target, ArrowUpRight, ArrowDownRight
+    Percent, BarChart3, Calendar, Target, ArrowUpRight, ArrowDownRight, Wallet
 } from 'lucide-react';
-
-interface MonthlyData {
-    income: number;
-    expense: number;
-}
 
 interface CategoryData {
     name: string;
     value: number;
     type: string;
-    [key: string]: string | number;
+    [key: string]: any;
 }
 
 export const Analysis: React.FC = () => {
+    const [stats, setStats] = useState<FinancialStats | null>(null);
     const [breakdown, setBreakdown] = useState<CategoryData[]>([]);
-    const [history, setHistory] = useState<any[]>([]);
-    const [monthlyTotals, setMonthlyTotals] = useState<MonthlyData>({ income: 0, expense: 0 });
     const [monthlyHistory, setMonthlyHistory] = useState<any[]>([]);
-    const [topExpenses, setTopExpenses] = useState<any[]>([]);
-    const [topIncome, setTopIncome] = useState<any[]>([]);
+    const [topExpenses, setTopExpenses] = useState<{ name: string, amount: number }[]>([]);
+    const [topIncome, setTopIncome] = useState<{ name: string, amount: number }[]>([]);
     const [transactionCount, setTransactionCount] = useState(0);
+    const [currentBalance, setCurrentBalance] = useState(0);
     const [currentDate, setCurrentDate] = useState(new Date());
-    const [_loading, setLoading] = useState(true);
+    const [loading, setLoading] = useState(true);
 
     useEffect(() => {
         loadCharts();
@@ -39,30 +35,75 @@ export const Analysis: React.FC = () => {
 
     const loadCharts = async () => {
         setLoading(true);
-        const year = currentDate.getFullYear().toString();
-        const month = (currentDate.getMonth() + 1).toString().padStart(2, '0');
+        const year = currentDate.getFullYear();
+        const month = currentDate.getMonth();
+
+        // Define Month Start/End
+        const start = new Date(year, month, 1);
+        const end = new Date(year, month + 1, 0); // last day of month
+
+        const startStr = start.toISOString().split('T')[0];
+        const endStr = end.toISOString().split('T')[0];
 
         try {
-            const [b, h, totals, mHistory, topExp, topInc, txCount] = await Promise.all([
-                getCategoryBreakdown(year, month),
-                getDailyHistory(30),
-                getMonthlyTotals(year, month),
-                getMonthlyHistory(6),
-                getTopCategories(year, month, 'EXPENSE', 5),
-                getTopCategories(year, month, 'INCOME', 5),
-                getTransactionCount(year, month)
-            ]);
+            const allTxs = await getTransactionsInRange('2000-01-01', endStr);
+            const smartStats = calculatePeriodStats(allTxs, startStr, endStr);
+            setStats(smartStats);
 
-            setBreakdown(b);
-            setHistory(h.reverse());
-            setMonthlyTotals(totals);
+            // Fetch Global Physical Balance
+            const cashBal = await getCurrentBalance();
+            setCurrentBalance(cashBal);
+
+            // Derive Categories Breakdown from transactions within this period (handling overlap)
+            const catMap: Record<number, { name: string, value: number, type: string }> = {};
+
+            allTxs.forEach(tx => {
+                const months = tx.months_covered || 1;
+                let effectiveAmount = 0;
+
+                if (months === 1) {
+                    if (tx.date >= startStr && tx.date <= endStr) {
+                        effectiveAmount = tx.amount;
+                    }
+                } else {
+                    const txStart = new Date(tx.date);
+                    const txEnd = new Date(txStart);
+                    txEnd.setMonth(txEnd.getMonth() + months);
+
+                    const overlapStart = new Date(Math.max(txStart.getTime(), start.getTime()));
+                    const overlapEnd = new Date(Math.min(txEnd.getTime(), end.getTime()));
+
+                    if (overlapStart < overlapEnd) {
+                        const daysOverlap = (overlapEnd.getTime() - overlapStart.getTime()) / (1000 * 3600 * 24);
+                        const totalTxDays = (txEnd.getTime() - txStart.getTime()) / (1000 * 3600 * 24);
+                        effectiveAmount = (daysOverlap / totalTxDays) * tx.amount;
+                    }
+                }
+
+                if (effectiveAmount > 0) {
+                    if (!catMap[tx.category_id]) {
+                        catMap[tx.category_id] = {
+                            name: tx.category_name || 'Unknown',
+                            value: 0,
+                            type: tx.category_type || 'EXPENSE'
+                        };
+                    }
+                    catMap[tx.category_id].value += effectiveAmount;
+                }
+            });
+
+            const catList = Object.values(catMap);
+            setBreakdown(catList);
+            setTopExpenses(catList.filter(c => c.type === 'EXPENSE').sort((a, b) => b.value - a.value).slice(0, 5).map(c => ({ name: c.name, amount: c.value })));
+            setTopIncome(catList.filter(c => c.type === 'INCOME').sort((a, b) => b.value - a.value).slice(0, 5).map(c => ({ name: c.name, amount: c.value })));
+            setTransactionCount(allTxs.filter(t => t.date >= startStr && t.date <= endStr).length);
+
+            const mHistory = await getMonthlyHistory(6);
             setMonthlyHistory(mHistory.reverse().map(m => ({
                 ...m,
                 monthLabel: new Date(m.month + '-01').toLocaleDateString('en-US', { month: 'short' })
             })));
-            setTopExpenses(topExp);
-            setTopIncome(topInc);
-            setTransactionCount(txCount);
+
         } catch (e) {
             console.error(e);
         } finally {
@@ -76,13 +117,12 @@ export const Analysis: React.FC = () => {
         setCurrentDate(newDate);
     };
 
-    const balance = monthlyTotals.income - monthlyTotals.expense;
-    const savingsRate = monthlyTotals.income > 0
-        ? ((monthlyTotals.income - monthlyTotals.expense) / monthlyTotals.income * 100)
+    const balance = stats ? stats.totalIncome - stats.totalExpense : 0;
+    const savingsRate = stats && stats.totalIncome > 0
+        ? ((stats.totalIncome - stats.totalExpense) / stats.totalIncome * 100)
         : 0;
 
     const COLORS = ['#6366f1', '#22c55e', '#f59e0b', '#ef4444', '#8b5cf6', '#06b6d4', '#ec4899', '#14b8a6'];
-
     const expenseBreakdown = breakdown.filter(b => b.type === 'EXPENSE');
     const incomeBreakdown = breakdown.filter(b => b.type === 'INCOME');
 
@@ -112,224 +152,222 @@ export const Analysis: React.FC = () => {
                 </div>
             </div>
 
-            {/* KPI Cards */}
-            <div style={{ display: 'grid', gridTemplateColumns: 'repeat(auto-fit, minmax(200px, 1fr))', gap: '16px' }}>
-                <KPICard
-                    title="Total Income"
-                    value={formatCurrency(monthlyTotals.income)}
-                    icon={<TrendingUp size={24} />}
-                    color="#22c55e"
-                    subtitle="This month"
-                />
-                <KPICard
-                    title="Total Expenses"
-                    value={formatCurrency(monthlyTotals.expense)}
-                    icon={<TrendingDown size={24} />}
-                    color="#ef4444"
-                    subtitle="This month"
-                />
-                <KPICard
-                    title="Net Balance"
-                    value={formatCurrency(balance)}
-                    icon={<DollarSign size={24} />}
-                    color={balance >= 0 ? '#22c55e' : '#ef4444'}
-                    subtitle={balance >= 0 ? 'Surplus' : 'Deficit'}
-                />
-                <KPICard
-                    title="Savings Rate"
-                    value={`${savingsRate.toFixed(1)}%`}
-                    icon={<Percent size={24} />}
-                    color={savingsRate >= 20 ? '#22c55e' : savingsRate >= 0 ? '#f59e0b' : '#ef4444'}
-                    subtitle={savingsRate >= 20 ? 'Excellent' : savingsRate >= 10 ? 'Good' : savingsRate >= 0 ? 'Low' : 'Negative'}
-                />
-                <KPICard
-                    title="Transactions"
-                    value={transactionCount.toString()}
-                    icon={<BarChart3 size={24} />}
-                    color="#6366f1"
-                    subtitle="This month"
-                />
-            </div>
-
-            {/* Income vs Expense Trend */}
-            <div className="card" style={{ height: '350px' }}>
-                <h3 style={{ margin: '0 0 16px 0', display: 'flex', alignItems: 'center', gap: '8px' }}>
-                    <Target size={20} color="var(--primary-color)" />
-                    6-Month Income vs Expense Trend
-                </h3>
-                {monthlyHistory.length > 0 ? (
-                    <ResponsiveContainer width="100%" height="85%">
-                        <ComposedChart data={monthlyHistory}>
-                            <CartesianGrid strokeDasharray="3 3" stroke="var(--border-color)" />
-                            <XAxis dataKey="monthLabel" stroke="var(--secondary-color)" />
-                            <YAxis stroke="var(--secondary-color)" tickFormatter={(v) => `${(v / 1000).toFixed(0)}K`} />
-                            <Tooltip
-                                contentStyle={{ background: 'var(--card-bg)', border: '1px solid var(--border-color)', borderRadius: '8px' }}
-                                formatter={(value: number | undefined) => formatCurrency(value || 0)}
-                            />
-                            <Legend />
-                            <Bar dataKey="income" name="Income" fill="#22c55e" radius={[4, 4, 0, 0]} />
-                            <Bar dataKey="expense" name="Expense" fill="#ef4444" radius={[4, 4, 0, 0]} />
-                            <Line type="monotone" dataKey="income" stroke="#16a34a" strokeWidth={2} dot={false} />
-                        </ComposedChart>
-                    </ResponsiveContainer>
-                ) : (
-                    <EmptyState message="No monthly data available" />
-                )}
-            </div>
-
-            {/* Charts Row */}
-            <div style={{ display: 'grid', gridTemplateColumns: 'repeat(auto-fit, minmax(400px, 1fr))', gap: '16px' }}>
-                {/* Expense Breakdown Pie */}
-                <div className="card" style={{ height: '400px' }}>
-                    <h3 style={{ margin: '0 0 16px 0' }}>Expense Distribution</h3>
-                    {expenseBreakdown.length > 0 ? (
-                        <ResponsiveContainer width="100%" height="85%">
-                            <PieChart>
-                                <Pie
-                                    data={expenseBreakdown}
-                                    cx="50%"
-                                    cy="50%"
-                                    innerRadius={60}
-                                    outerRadius={100}
-                                    paddingAngle={2}
-                                    dataKey="value"
-                                >
-                                    {expenseBreakdown.map((_, index) => (
-                                        <Cell key={`cell-${index}`} fill={COLORS[index % COLORS.length]} />
-                                    ))}
-                                </Pie>
-                                <Tooltip formatter={(value: number | undefined) => formatCurrency(value || 0)} />
-                                <Legend />
-                            </PieChart>
-                        </ResponsiveContainer>
-                    ) : (
-                        <EmptyState message="No expense data for this month" />
-                    )}
-                </div>
-
-                {/* Income Breakdown */}
-                <div className="card" style={{ height: '400px' }}>
-                    <h3 style={{ margin: '0 0 16px 0' }}>Income Distribution</h3>
-                    {incomeBreakdown.length > 0 ? (
-                        <ResponsiveContainer width="100%" height="85%">
-                            <PieChart>
-                                <Pie
-                                    data={incomeBreakdown}
-                                    cx="50%"
-                                    cy="50%"
-                                    innerRadius={60}
-                                    outerRadius={100}
-                                    paddingAngle={2}
-                                    dataKey="value"
-                                >
-                                    {incomeBreakdown.map((_, index) => (
-                                        <Cell key={`cell-${index}`} fill={COLORS[(index + 2) % COLORS.length]} />
-                                    ))}
-                                </Pie>
-                                <Tooltip formatter={(value: number | undefined) => formatCurrency(value || 0)} />
-                                <Legend />
-                            </PieChart>
-                        </ResponsiveContainer>
-                    ) : (
-                        <EmptyState message="No income data for this month" />
-                    )}
-                </div>
-            </div>
-
-            {/* Daily Spending Trend */}
-            <div className="card" style={{ height: '300px' }}>
-                <h3 style={{ margin: '0 0 16px 0' }}>Daily Spending Pattern (Last 30 Days)</h3>
-                {history.length > 0 ? (
-                    <ResponsiveContainer width="100%" height="85%">
-                        <AreaChart data={history}>
-                            <CartesianGrid strokeDasharray="3 3" stroke="var(--border-color)" />
-                            <XAxis dataKey="date" stroke="var(--secondary-color)" tickFormatter={(d) => new Date(d).getDate().toString()} />
-                            <YAxis stroke="var(--secondary-color)" />
-                            <Tooltip
-                                contentStyle={{ background: 'var(--card-bg)', border: '1px solid var(--border-color)', borderRadius: '8px' }}
-                                formatter={(value: number | undefined) => formatCurrency(value || 0)}
-                                labelFormatter={(d) => new Date(d).toLocaleDateString()}
-                            />
-                            <Area type="monotone" dataKey="amount" stroke="#6366f1" fill="rgba(99, 102, 241, 0.2)" strokeWidth={2} />
-                        </AreaChart>
-                    </ResponsiveContainer>
-                ) : (
-                    <EmptyState message="No spending history available" />
-                )}
-            </div>
-
-            {/* Top Categories */}
-            <div style={{ display: 'grid', gridTemplateColumns: '1fr 1fr', gap: '16px' }}>
-                {/* Top Expenses */}
-                <div className="card">
-                    <h3 style={{ margin: '0 0 16px 0', display: 'flex', alignItems: 'center', gap: '8px' }}>
-                        <ArrowDownRight size={20} color="#ef4444" />
-                        Top Expenses
-                    </h3>
-                    {topExpenses.length > 0 ? (
-                        <div className="flex-col gap-3">
-                            {topExpenses.map((cat, idx) => (
-                                <CategoryBar
-                                    key={idx}
-                                    name={cat.name}
-                                    amount={cat.amount}
-                                    maxAmount={topExpenses[0]?.amount || 1}
-                                    color="#ef4444"
-                                    rank={idx + 1}
-                                />
-                            ))}
+            {loading || !stats ? (
+                <div style={{ padding: '40px', textAlign: 'center' }}>Loading Analysis...</div>
+            ) : (
+                <>
+                    {/* KPI Cards */}
+                    <div style={{ display: 'grid', gridTemplateColumns: 'repeat(auto-fit, minmax(200px, 1fr))', gap: '16px' }}>
+                        {/* Physical Balance Card */}
+                        <div className="card" style={{
+                            background: 'linear-gradient(135deg, var(--primary-color), #312e81)',
+                            color: 'white',
+                            padding: '24px',
+                            position: 'relative',
+                            overflow: 'hidden',
+                            boxShadow: '0 10px 25px -5px rgba(79, 70, 229, 0.4)',
+                            border: 'none',
+                            display: 'flex',
+                            flexDirection: 'column',
+                            justifyContent: 'center'
+                        }}>
+                            <div style={{ position: 'relative', zIndex: 2 }}>
+                                <p style={{ margin: '0 0 8px 0', fontSize: '0.9rem', opacity: 0.9 }}>Physical Balance</p>
+                                <h3 style={{ margin: 0, fontSize: '2rem', fontWeight: 700 }}>{formatCurrency(currentBalance)}</h3>
+                                <p style={{ margin: '8px 0 0 0', fontSize: '0.8rem', opacity: 0.8 }}>Current Cash on Hand</p>
+                            </div>
+                            <div style={{ position: 'absolute', right: -20, bottom: -20, opacity: 0.2, color: 'white' }}>
+                                <Wallet size={120} />
+                            </div>
                         </div>
-                    ) : (
-                        <p style={{ color: 'var(--secondary-color)', textAlign: 'center', padding: '20px 0' }}>No expense data</p>
-                    )}
-                </div>
+                        <KPICard
+                            title="Period Income"
+                            value={formatCurrency(stats.totalIncome)}
+                            icon={<TrendingUp size={24} />}
+                            color="#22c55e"
+                            subtitle="Accrued (Smart)"
+                        />
+                        <KPICard
+                            title="Period Expenses"
+                            value={formatCurrency(stats.totalExpense)}
+                            icon={<TrendingDown size={24} />}
+                            color="#ef4444"
+                            subtitle="Amortized (Smart)"
+                        />
+                        <KPICard
+                            title="Period Net"
+                            value={formatCurrency(balance)}
+                            icon={<DollarSign size={24} />}
+                            color={balance >= 0 ? '#22c55e' : '#ef4444'}
+                            subtitle={balance >= 0 ? 'Surplus' : 'Deficit'}
+                        />
+                        <KPICard
+                            title="Savings Rate"
+                            value={`${savingsRate.toFixed(1)}%`}
+                            icon={<Percent size={24} />}
+                            color={savingsRate >= 20 ? '#22c55e' : savingsRate >= 0 ? '#f59e0b' : '#ef4444'}
+                            subtitle={savingsRate >= 20 ? 'Excellent' : savingsRate >= 10 ? 'Good' : savingsRate >= 0 ? 'Low' : 'Negative'}
+                        />
+                        <KPICard
+                            title="Transactions"
+                            value={transactionCount.toString()}
+                            icon={<BarChart3 size={24} />}
+                            color="#6366f1"
+                            subtitle="This month"
+                        />
+                    </div>
 
-                {/* Top Income */}
-                <div className="card">
-                    <h3 style={{ margin: '0 0 16px 0', display: 'flex', alignItems: 'center', gap: '8px' }}>
-                        <ArrowUpRight size={20} color="#22c55e" />
-                        Top Income Sources
-                    </h3>
-                    {topIncome.length > 0 ? (
-                        <div className="flex-col gap-3">
-                            {topIncome.map((cat, idx) => (
-                                <CategoryBar
-                                    key={idx}
-                                    name={cat.name}
-                                    amount={cat.amount}
-                                    maxAmount={topIncome[0]?.amount || 1}
-                                    color="#22c55e"
-                                    rank={idx + 1}
+                    {/* Trend Chart */}
+                    <div className="card" style={{ height: '350px' }}>
+                        <h3 style={{ margin: '0 0 16px 0', display: 'flex', alignItems: 'center', gap: '8px' }}>
+                            <Target size={20} color="var(--primary-color)" />
+                            6-Month Income vs Expense Trend
+                        </h3>
+                        <ResponsiveContainer width="100%" height="85%">
+                            <ComposedChart data={monthlyHistory}>
+                                <CartesianGrid strokeDasharray="3 3" stroke="var(--border-color)" />
+                                <XAxis dataKey="monthLabel" stroke="var(--secondary-color)" />
+                                <YAxis stroke="var(--secondary-color)" tickFormatter={(v) => `${(v / 1000).toFixed(0)}K`} />
+                                <Tooltip
+                                    contentStyle={{ background: 'var(--card-bg)', border: '1px solid var(--border-color)', borderRadius: '8px' }}
+                                    formatter={(value: number | undefined) => [formatCurrency(value || 0), '']}
                                 />
-                            ))}
-                        </div>
-                    ) : (
-                        <p style={{ color: 'var(--secondary-color)', textAlign: 'center', padding: '20px 0' }}>No income data</p>
-                    )}
-                </div>
-            </div>
+                                <Legend />
+                                <Bar dataKey="income" name="Income" fill="#22c55e" radius={[4, 4, 0, 0]} />
+                                <Bar dataKey="expense" name="Expense" fill="#ef4444" radius={[4, 4, 0, 0]} />
+                                <Line type="monotone" dataKey="income" stroke="#16a34a" strokeWidth={2} dot={false} />
+                            </ComposedChart>
+                        </ResponsiveContainer>
+                    </div>
 
-            {/* Insights Section */}
-            <div className="card" style={{ background: 'linear-gradient(135deg, rgba(99, 102, 241, 0.1) 0%, rgba(139, 92, 246, 0.1) 100%)' }}>
-                <h3 style={{ margin: '0 0 16px 0' }}>💡 Financial Insights</h3>
-                <div style={{ display: 'grid', gridTemplateColumns: 'repeat(auto-fit, minmax(250px, 1fr))', gap: '16px' }}>
-                    <InsightCard
-                        title="Spending Habit"
-                        value={monthlyTotals.expense > 0 ? `Avg ${formatCurrency(monthlyTotals.expense / (transactionCount || 1))} per transaction` : 'No spending yet'}
-                    />
-                    <InsightCard
-                        title="Top Expense Category"
-                        value={topExpenses[0]?.name || 'N/A'}
-                        subtitle={topExpenses[0] ? formatCurrency(topExpenses[0].amount) : ''}
-                    />
-                    <InsightCard
-                        title="Monthly Status"
-                        value={balance >= 0 ? '✅ On Track' : '⚠️ Overspending'}
-                        subtitle={balance >= 0 ? `Saved ${formatCurrency(balance)}` : `Over by ${formatCurrency(Math.abs(balance))}`}
-                    />
-                </div>
-            </div>
+                    {/* Charts Row */}
+                    <div style={{ display: 'grid', gridTemplateColumns: 'repeat(auto-fit, minmax(400px, 1fr))', gap: '16px' }}>
+                        {/* Expense Breakdown Pie */}
+                        <div className="card" style={{ height: '400px' }}>
+                            <h3 style={{ margin: '0 0 16px 0' }}>Expense Distribution</h3>
+                            {expenseBreakdown.length > 0 ? (
+                                <ResponsiveContainer width="100%" height="85%">
+                                    <PieChart>
+                                        <Pie
+                                            data={expenseBreakdown}
+                                            cx="50%"
+                                            cy="50%"
+                                            innerRadius={60}
+                                            outerRadius={100}
+                                            paddingAngle={2}
+                                            dataKey="value"
+                                        >
+                                            {expenseBreakdown.map((_, index) => (
+                                                <Cell key={`cell-${index}`} fill={COLORS[index % COLORS.length]} />
+                                            ))}
+                                        </Pie>
+                                        <Tooltip formatter={(value: number | undefined) => [formatCurrency(value || 0), '']} />
+                                        <Legend />
+                                    </PieChart>
+                                </ResponsiveContainer>
+                            ) : (
+                                <EmptyState message="No expense data for this month" />
+                            )}
+                        </div>
+
+                        {/* Income Breakdown Pie */}
+                        <div className="card" style={{ height: '400px' }}>
+                            <h3 style={{ margin: '0 0 16px 0' }}>Income Distribution</h3>
+                            {incomeBreakdown.length > 0 ? (
+                                <ResponsiveContainer width="100%" height="85%">
+                                    <PieChart>
+                                        <Pie
+                                            data={incomeBreakdown}
+                                            cx="50%"
+                                            cy="50%"
+                                            innerRadius={60}
+                                            outerRadius={100}
+                                            paddingAngle={2}
+                                            dataKey="value"
+                                        >
+                                            {incomeBreakdown.map((_, index) => (
+                                                <Cell key={`cell-${index}`} fill={COLORS[(index + 2) % COLORS.length]} />
+                                            ))}
+                                        </Pie>
+                                        <Tooltip formatter={(value: number | undefined) => [formatCurrency(value || 0), '']} />
+                                        <Legend />
+                                    </PieChart>
+                                </ResponsiveContainer>
+                            ) : (
+                                <EmptyState message="No income data for this month" />
+                            )}
+                        </div>
+                    </div>
+
+                    {/* Daily Pattern */}
+                    <div className="card" style={{ height: '300px' }}>
+                        <h3 style={{ margin: '0 0 16px 0' }}>Daily Spending Pattern (This Month)</h3>
+                        {stats && Object.keys(stats.dailyStats).length > 0 ? (
+                            <ResponsiveContainer width="100%" height="85%">
+                                <AreaChart data={Object.entries(stats.dailyStats).map(([d, v]) => ({ date: d, amount: v.expense })).sort((a, b) => a.date.localeCompare(b.date))}>
+                                    <CartesianGrid strokeDasharray="3 3" stroke="var(--border-color)" />
+                                    <XAxis dataKey="date" stroke="var(--secondary-color)" tickFormatter={(d) => new Date(d).getDate().toString()} />
+                                    <YAxis stroke="var(--secondary-color)" />
+                                    <Tooltip
+                                        contentStyle={{ background: 'var(--card-bg)', border: '1px solid var(--border-color)', borderRadius: '8px' }}
+                                        formatter={(value: number | undefined) => [formatCurrency(value || 0), '']}
+                                        labelFormatter={(d) => new Date(d).toLocaleDateString()}
+                                    />
+                                    <Area type="monotone" dataKey="amount" stroke="#6366f1" fill="rgba(99, 102, 241, 0.2)" strokeWidth={2} />
+                                </AreaChart>
+                            </ResponsiveContainer>
+                        ) : (
+                            <EmptyState message="No spending history available" />
+                        )}
+                    </div>
+
+                    {/* Top lists */}
+                    <div style={{ display: 'grid', gridTemplateColumns: '1fr 1fr', gap: '16px' }}>
+                        <div className="card">
+                            <h3 style={{ margin: '0 0 16px 0', display: 'flex', alignItems: 'center', gap: '8px' }}>
+                                <ArrowDownRight size={20} color="#ef4444" />
+                                Top Expenses
+                            </h3>
+                            {topExpenses.length > 0 ? (
+                                <div className="flex-col gap-3">
+                                    {topExpenses.map((cat, idx) => (
+                                        <CategoryBar
+                                            key={idx}
+                                            name={cat.name}
+                                            amount={cat.amount}
+                                            maxAmount={topExpenses[0]?.amount || 1}
+                                            color="#ef4444"
+                                            rank={idx + 1}
+                                        />
+                                    ))}
+                                </div>
+                            ) : <p style={{ color: 'var(--secondary-color)' }}>No data</p>}
+                        </div>
+
+                        <div className="card">
+                            <h3 style={{ margin: '0 0 16px 0', display: 'flex', alignItems: 'center', gap: '8px' }}>
+                                <ArrowUpRight size={20} color="#22c55e" />
+                                Top Income
+                            </h3>
+                            {topIncome.length > 0 ? (
+                                <div className="flex-col gap-3">
+                                    {topIncome.map((cat, idx) => (
+                                        <CategoryBar
+                                            key={idx}
+                                            name={cat.name}
+                                            amount={cat.amount}
+                                            maxAmount={topIncome[0]?.amount || 1}
+                                            color="#22c55e"
+                                            rank={idx + 1}
+                                        />
+                                    ))}
+                                </div>
+                            ) : <p style={{ color: 'var(--secondary-color)' }}>No data</p>}
+                        </div>
+                    </div>
+
+                </>
+            )}
         </div>
     );
 };
@@ -374,14 +412,6 @@ const CategoryBar = ({ name, amount, maxAmount, color, rank }: any) => {
         </div>
     );
 };
-
-const InsightCard = ({ title, value, subtitle }: any) => (
-    <div style={{ padding: '16px', background: 'var(--card-bg)', borderRadius: 'var(--radius)', border: '1px solid var(--border-color)' }}>
-        <p style={{ margin: '0 0 4px 0', fontSize: '0.85rem', color: 'var(--secondary-color)' }}>{title}</p>
-        <p style={{ margin: 0, fontSize: '1.1rem', fontWeight: 600 }}>{value}</p>
-        {subtitle && <p style={{ margin: '4px 0 0 0', fontSize: '0.85rem', color: 'var(--secondary-color)' }}>{subtitle}</p>}
-    </div>
-);
 
 const EmptyState = ({ message }: { message: string }) => (
     <div style={{

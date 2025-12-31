@@ -3,7 +3,8 @@ import * as XLSX from 'xlsx';
 import { save } from '@tauri-apps/plugin-dialog';
 import { writeFile } from '@tauri-apps/plugin-fs';
 import { getAllTransactions, getCategories, addCategory, hideCategory, updateCategory } from '../db/queries';
-import { Download, Save, EyeOff, Pencil, X } from 'lucide-react';
+import { wipeDatabase } from '../db/index';
+import { Download, Save, EyeOff, Pencil, X, AlertTriangle } from 'lucide-react';
 import { Category } from '../types';
 
 export const Settings: React.FC = () => {
@@ -301,6 +302,34 @@ export const Settings: React.FC = () => {
                         }
                     }}
                 />
+                {/* Danger Zone */}
+                <h2 style={{ color: 'var(--danger-color)' }}>Danger Zone</h2>
+                <div className="card" style={{ borderColor: 'var(--danger-color)' }}>
+                    <h3>Wipe All Data</h3>
+                    <p style={{ color: 'var(--secondary-color)' }}>
+                        This will permanently delete ALL transactions and reset categories to default. This action cannot be undone.
+                    </p>
+                    <button
+                        className="btn"
+                        style={{ background: 'var(--danger-color)', color: 'white', border: 'none', display: 'flex', gap: '8px', alignItems: 'center' }}
+                        onClick={async () => {
+                            if (confirm('WARNING: Are you sure you want to delete ALL data? This cannot be undone.')) {
+                                if (confirm('Double check: Allows really wipe everything?')) {
+                                    try {
+                                        await wipeDatabase();
+                                        alert('Database wiped successfully.');
+                                        window.location.reload(); // Reload to refresh state
+                                    } catch (e) {
+                                        console.error(e);
+                                        alert('Failed to wipe database');
+                                    }
+                                }
+                            }
+                        }}
+                    >
+                        <AlertTriangle size={18} /> Wipe All Data
+                    </button>
+                </div>
             </div>
         </div>
     );
